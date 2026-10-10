@@ -58,7 +58,7 @@ setting and picks one per request.
 select_chat_formatter(&ChatFormatterOptions) -> (Option<ChatFormatter>, Option<String>)
 load_chat_formatter(tokenizer_config, model_path, model_type, chat_template) -> Result<ChatFormatter, TemplateError>
 ChatFormatter::render_prompt(&dyn OAIChatLikeRequest) -> Result<RenderedPrompt, TemplateError>
-ChatFormatter::render_request(serde_json::Value, &default_kwargs) -> Result<(String, String), TemplateError>  // DeepSeek-V4, V4.1
+ChatFormatter::render_request(serde_json::Value, &default_kwargs) -> Result<(RenderedPrompt, String), TemplateError>  // DeepSeek-V4, V4.1, Kimi K3
 DeepSeekV4Profile::from_checkpoint(profile_override, encoder_source) -> Result<DeepSeekV4Profile, String>
 ChatFormatter::resolve_thinking(&mut kwargs, tools_enabled, named_tool_choice) -> Option<bool>
 ChatFormatter::stop_strs() -> Option<OneOrMany<String>>
@@ -74,7 +74,8 @@ native formatters.
 |---|---|
 | DeepSeek V4 | `models/deepseek_v4.rs` on Dynamo's V4 encoder |
 | DeepSeek V4.1 | `models/deepseek_v41.rs` on Dynamo's V4.1 encoder |
-| DeepSeek V3.2, Kimi K3, Inkling, other Dynamo native models | Dynamo native formatter, with SGLang's thinking defaults |
+| Kimi K3 | `models/kimi_k3.rs` on Dynamo's K3 formatter |
+| DeepSeek V3.2, Inkling, other Dynamo native models | Dynamo native formatter, with SGLang's thinking defaults |
 | Everything else | `load_chat_formatter` |
 
 `load_chat_formatter` (`loader.rs`) follows Python's `template_manager.py`
@@ -91,7 +92,8 @@ with `encode_segments`.
 `OAIChatLikeRequest` lacks. It returns the continuation prefix separately, since
 SGLang tokenizes it on its own. `default_kwargs` are the server's
 `--default-chat-template-kwargs`, which apply after the request's own values.
-On a DeepSeek formatter, `render_prompt` rebuilds the body from the trait.
+On a DeepSeek formatter, `render_prompt` rebuilds the body from the trait; on
+Kimi K3 it keeps Dynamo's request semantics, which typed hosts rely on.
 `from_checkpoint` lets a host that fetches model files itself, such as
 sgl-router, build `ChatFormatter::DeepSeekV4` directly. `requested_effort` and
 `requested_thinking` (`reasoning.rs`) port `protocol.py`'s `reasoning` handling
@@ -104,6 +106,7 @@ once, for the renderer and DeepSeek-V4 and V4.1 alike. The SGLang additions hook
 | `models/deepseek_v4.rs` | `entrypoints/openai/serving_chat.py`, `encoding_dsv4.py`, `chat_encoding.py` | Replaces the OAI formatter. It normalises the request the way SGLang does (message dump, part flattening, tool field order, final assistant turn, `task`, thinking and effort, the checkpoint's effort profile), then calls `deepseek::v4::encode_messages_with_options`. |
 | `models/deepseek_v41.rs` | the same, `encoding_dsv41.py` | Replaces the OAI formatter. On top of the V4 dump it keeps text parts lists, sends only the request tool fields the client set, and maps effort to the encoder's 1-100 budget, then calls `deepseek::v41::encode_messages`. Developer turns and media are left to the engine. |
 | `models/kimi_k25.rs` | the Kimi K2.5 checkpoint's tool encoder | Adds `tools_ts_str` (TypeScript tool declarations) to the kwargs before the Jinja render. |
+| `models/kimi_k3.rs` | `serving_chat.py` (`_prepare_kimi_k3_messages`, `_encode_messages`), the checkpoint's `encoding_k3.py` | Replaces the OAI formatter's request handling. It prepares the messages, tools, thinking effort, `tool_choice` and `response_format` as SGLang does, then calls Dynamo's `KimiK3Formatter`. Shapes Dynamo renders differently are left to the engine. |
 
 `stop_strs` returns the legacy template's stop strings; Jinja and native
 formatters have none, as in Python.
